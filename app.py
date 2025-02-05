@@ -1,31 +1,138 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+from datetime import datetime
 
-# App title
-st.title("SBIN.NS OHLCV Data Viewer")
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Fetch data
-def fetch_sbin_data():
-    ticker = "SBIN.NS"
-    stock = yf.Ticker(ticker)
-    data = stock.history(period="1mo", interval="1d")
-    return data.tail(10)
+# Load stock lists
+nifty_50 = pd.read_csv("nifty50.csv")
+nifty_100 = pd.read_csv("nifty100.csv")
 
-# Display OHLCV data
-data = fetch_sbin_data()
-if not data.empty:
-    st.subheader("Last 10 Days OHLCV Data for SBIN.NS")
-    st.write(data)
-else:
-    st.error("Failed to fetch data. Please try again later.")
+nifty_50.columns = [col.split()[0] for col in nifty_50.columns]
+nifty_50_stocks = nifty_50["SYMBOL"].tolist()
 
-# Show additional options for users
+nifty_100.columns = [col.split()[0] for col in nifty_100.columns]
+nifty_100_stocks = nifty_100["SYMBOL"].tolist()
+
+# Streamlit title
+st.title("Radon Research")
+
+# Sidebar inputs
 st.sidebar.header("Options")
-if st.sidebar.checkbox("Show data summary"):
-    st.subheader("Data Summary")
-    st.write(data.describe())
 
-if st.sidebar.checkbox("Download as CSV"):
-    csv = data.to_csv()
-    st.download_button(label="Download CSV", data=csv, file_name="sbin_ohlcv.csv", mime="text/csv")
+# Stock selection
+ticker_list = st.sidebar.radio("Select Stock List", ("Nifty 50", "Nifty 100"))
+stocks = nifty_50_stocks if ticker_list == "Nifty 50" else nifty_100_stocks
+
+# Interval selection
+interval = st.sidebar.radio("Select Interval", ("1m", "5m", "15m", "1h", "1d"))
+period = "1y" if interval == "1d" else "1mo"
+
+# LeftBars input
+leftBars = st.sidebar.number_input("LeftBars", min_value=1, max_value=200, value=100, step=1)
+
+# Submit button
+submit_button = st.sidebar.button("Submit")
+
+def get_volatility(df):
+    df = df.tail(200)
+    returns = df['close'].pct_change() * 100
+    swing_volatility = returns.std()
+    return swing_volatility
+
+def volume_change(df):
+    return df['volume'].pct_change() * 100
+
+def checkhl(data_back, data_forward, hl):
+    ref = data_back[-1] 
+    if hl == 'high':
+        return all(ref >= x for x in data_back[:-1]) and all(ref > x for x in data_forward)
+    elif hl == 'low':
+        return all(ref <= x for x in data_back[:-1]) and all(ref < x for x in data_forward)
+    return False
+
+def pivot(osc, LBL, LBR, highlow):
+    pivots = [None] * len(osc)
+    for i in range(LBL, len(osc) - LBR):
+        left = osc.iloc[i - LBL:i + 1].values
+        right = osc.iloc[i + 1:i + LBR + 1].values
+        if checkhl(left, right, highlow):
+            pivots[i] = osc.iloc[i]
+    return pivots
+
+def get_signal_data(ticker, leftBars, period="1mo", interval="1d"):
+    rightBars = 0
+    stock = yf.Ticker(ticker + ".NS")
+    df = stock.history(period=period, interval=interval)
+    if df.empty:
+        return None, None
+        
+    df.columns = [col.lower() for col in df.columns]
+    df = df.reset_index()
+    df['vol_change'] = volume_change(df)
+    df['volume'] = df['volume'] / 100000
+    
+    # Calculate pivot highs and lows
+    df['pvtHigh'] = pivot(df['high'], leftBars, rightBars, 'high')
+    df['pvtLow'] = pivot(df['low'], leftBars, rightBars, 'low')
+    
+    current_breakout = df.iloc[-1].copy()  # Last row
+    most_recent_valid = df.dropna(subset=['pvtHigh', 'pvtLow'], how='all')
+    
+    signal_dfs = []
+    
+    # Check for current signals
+    if not pd.isna(current_breakout['pvtHigh']) or not pd.isna(current_breakout['pvtLow']):
+        current_breakout['symbol'] = ticker + ".NS"
+        current_breakout['volatility'] = get_volatility(df)
+        signal_dfs.append(pd.DataFrame([current_breakout]))
+    
+    # Check for most recent valid signals
+    if not most_recent_valid.empty:
+        most_recent_signal = most_recent_valid.iloc[-1].copy()
+        most_recent_signal['symbol'] = ticker + ".NS"
+        most_recent_signal['volatility'] = get_volatility(df)
+        signal_dfs.append(pd.DataFrame([most_recent_signal]))
+    
+    if signal_dfs:
+        return pd.concat(signal_dfs, ignore_index=True)
+    return None
+
+if submit_button:
+    all_signals = pd.DataFrame()
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(get_signal_data, stock, leftBars, period=period, interval=interval): stock for stock in stocks}
+        
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                if result is not None:
+                    all_signals = pd.concat([all_signals, result], ignore_index=True)
+            except Exception as e:
+                st.error(f"Error processing stock: {e}")
+                continue
+    
+    if not all_signals.empty:
+        # Clean and format dataframe
+        all_signals = all_signals.round(2)
+        all_signals['Datetime'] = pd.to_datetime(all_signals['Datetime'])
+        today = datetime.now().date()
+        # all_signals = all_signals[all_signals['Datetime'].dt.date == today]
+        # if 'datetime' in all_signals.columns:
+        #     all_signals['datetime'] = pd.to_datetime(all_signals['datetime'])
+        #     all_signals['time'] = all_signals['datetime'].dt.strftime('%H:%M')
+        #     all_signals.drop(columns=['datetime'], inplace=True)
+        all_signals['signal'] = all_signals.apply(
+            lambda x: 'Sell' if pd.notna(x['pvtHigh']) else 'Buy' if pd.notna(x['pvtLow']) else None, axis=1
+        )
+        # Filter columns to display
+        display_columns = ['symbol',  'close', 'volume', 'vol_change', 
+                          'pvtHigh', 'pvtLow', 'volatility', 'time', 'signal','Datetime']
+        display_df = all_signals[[col for col in display_columns if col in all_signals.columns]]
+        
+        st.write("Breakout Signals")
+        st.dataframe(display_df, height=800,use_container_width=True)
+    else:
+        st.info("No breakout signals found in selected stocks.")
