@@ -117,9 +117,14 @@ if submit_button:
     if not all_signals.empty:
         # Clean and format dataframe
         all_signals = all_signals.round(2)
-        all_signals['Datetime'] = pd.to_datetime(all_signals['Datetime'])
+        print(all_signals.columns)
+        try:
+            all_signals['Datetime'] = pd.to_datetime(all_signals['Datetime'])
+        except:
+            all_signals['Date'] = pd.to_datetime(all_signals['Date'])
+            all_signals['Datetime'] =all_signals['Date']
         today = datetime.now().date()
-        # all_signals = all_signals[all_signals['Datetime'].dt.date == today]
+        all_signals = all_signals[all_signals['Datetime'].dt.date == today]
         # if 'datetime' in all_signals.columns:
         #     all_signals['datetime'] = pd.to_datetime(all_signals['datetime'])
         #     all_signals['time'] = all_signals['datetime'].dt.strftime('%H:%M')
@@ -131,8 +136,8 @@ if submit_button:
         display_columns = ['symbol',  'close', 'volume', 'vol_change', 
                           'pvtHigh', 'pvtLow', 'volatility', 'time', 'signal','Datetime']
         display_df = all_signals[[col for col in display_columns if col in all_signals.columns]]
-        
+        display_df = display_df.drop_duplicates(subset=['symbol'])
         st.write("Breakout Signals")
-        st.dataframe(display_df, height=800,use_container_width=True)
+        st.dataframe(display_df,use_container_width=True)
     else:
         st.info("No breakout signals found in selected stocks.")
