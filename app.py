@@ -72,6 +72,8 @@ def get_signal_data(ticker, leftBars, period="1mo", interval="1d"):
     df = stock.history(period=period, interval=interval)
     if df.empty:
         return None
+    columns_to_drop = ['Dividends', 'Stock Splits']
+    df = df.drop(columns=columns_to_drop)
 
     df.columns = [col.lower() for col in df.columns]
     df = df.reset_index()
