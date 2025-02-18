@@ -132,6 +132,7 @@ if submit_button:
                     result = future.result()
                     if result is not None:
                         result['symbol'] = futures[future]
+                        result = result.tail(1)
                         all_indicators = pd.concat([all_indicators, result], ignore_index=True)
                 except Exception as e:
                     st.error(f"Error processing stock: {e}")
