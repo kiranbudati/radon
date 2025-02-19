@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
+import time
 def rsi(ohlc: pd.DataFrame, period: int = 14) -> pd.Series:
     """
     Calculates the Relative Strength Index (RSI) using Exponential Moving Averages.
@@ -127,6 +127,7 @@ if submit_button:
         all_indicators = pd.DataFrame()
 
         with ThreadPoolExecutor(max_workers=10) as executor:
+            time.sleep(0.5)
             futures = {executor.submit(calculate_indicators, stock, period, interval): stock for stock in stocks}
 
             for future in as_completed(futures):
