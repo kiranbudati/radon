@@ -127,7 +127,6 @@ if submit_button:
         all_indicators = pd.DataFrame()
 
         with ThreadPoolExecutor(max_workers=10) as executor:
-            time.sleep(0.5)
             futures = {executor.submit(calculate_indicators, stock, period, interval): stock for stock in stocks}
 
             for future in as_completed(futures):
